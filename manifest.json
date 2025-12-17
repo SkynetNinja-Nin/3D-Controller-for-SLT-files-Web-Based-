@@ -1,0 +1,15 @@
+{
+  "name": "3D Hand Controller",
+  "short_name": "3D Pilot",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#00ffcc",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

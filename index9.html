@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hybrid Keyboard Interface</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #050505; font-family: 'Segoe UI', sans-serif; }
+        
+        #hud {
+            position: absolute; top: 20px; left: 20px; width: 340px;
+            color: #00ffcc; background: rgba(0, 10, 20, 0.95); 
+            padding: 20px; border-radius: 12px; border: 1px solid #00ffcc;
+            z-index: 100; box-shadow: 0 0 25px rgba(0, 255, 204, 0.15);
+            user-select: none; pointer-events: none;
+        }
+        #hud * { pointer-events: all; }
+
+        h2 { margin: 0 0 15px 0; font-size: 16px; text-transform: uppercase; letter-spacing: 1.5px; border-bottom: 1px solid #333; padding-bottom: 10px; color:white; }
+        
+        /* Slider */
+        .slider-container { margin-bottom: 15px; background: #111; padding: 10px; border-radius: 6px; }
+        .slider-label { font-size: 12px; font-weight: bold; color: #aaa; display: flex; justify-content: space-between; margin-bottom: 5px; }
+        input[type=range] { width: 100%; cursor: pointer; accent-color: #00ffcc; }
+
+        /* Locks */
+        .lock-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; background: #111; padding: 6px 10px; border-radius: 6px; }
+        .lock-label { font-size: 12px; font-weight: bold; color: #aaa; }
+        .toggle-btn {
+            background: #333; color: #888; border: 1px solid #555; padding: 4px 10px;
+            border-radius: 4px; font-size: 11px; cursor: pointer; transition: 0.2s; min-width: 70px; text-align: center;
+        }
+        .toggle-btn.unlocked { background: #00ffcc; color: #000; font-weight: bold; border-color: #fff; }
+        .toggle-btn.locked { background: #ff3333; color: white; border-color: #ff0000; }
+
+        /* Status */
+        .status-row { display: flex; align-items: center; margin-bottom: 5px; font-size: 13px; color: #777; transition: 0.2s; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; margin-right: 10px; transition: 0.2s; border: 1px solid #555;}
+        .active { color: white; text-shadow: 0 0 5px rgba(255,255,255,0.5); }
+        .active .status-dot { background: #00ffcc; box-shadow: 0 0 10px #00ffcc; border-color: #fff; }
+
+        .control-section { margin-top: 15px; padding-top: 15px; border-top: 1px solid #333; }
+        .mode-toggle { display: flex; gap: 5px; margin-bottom: 15px; background: #111; padding: 4px; border-radius: 6px; }
+        .mode-toggle label { flex: 1; text-align: center; padding: 8px 0; font-size: 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; color: #888; }
+        .mode-toggle input { display: none; }
+        .mode-toggle input:checked + span { color: #000; font-weight: bold; }
+        .mode-toggle label:has(input:checked) { background: #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.4); }
+
+        .btn-upload { width: 100%; background: linear-gradient(90deg, #333, #444); border: 1px solid #555; padding: 10px; border-radius: 6px; color: white; font-size: 12px; cursor: pointer; transition: 0.2s; }
+        .btn-upload:hover { background: #555; border-color: #fff; }
+
+        #preview-container { position: absolute; bottom: 20px; right: 20px; width: 180px; height: 135px; border: 2px solid #333; border-radius: 10px; overflow: hidden; z-index: 100; background: #000; }
+        #preview-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00ffcc; font-size: 18px; text-align: center; pointer-events: none; text-shadow: 0 0 10px rgba(0,255,204,0.5); }
+        #view-indicator { position: absolute; top: 10px; right: 10px; font-weight: bold; font-size: 10px; color: #555; }
+    </style>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loading">Initializing...</div>
+
+    <div id="hud">
+        <h2>Hybrid Controls</h2>
+        
+        <div class="slider-container">
+            <div class="slider-label"><span>ROTATION SENSITIVITY</span> <span id="sens-val">5.0</span></div>
+            <input type="range" min="1" max="15" step="0.5" value="5.0" id="sensitivity-slider">
+        </div>
+
+        <div class="lock-row">
+            <span class="lock-label">✋ PAN LOCK</span>
+            <button id="pan-btn" class="toggle-btn unlocked" onclick="toggleLock('pan')">UNLOCKED</button>
+        </div>
+        <div class="lock-row">
+            <span class="lock-label">👐 ZOOM LOCK</span>
+            <button id="zoom-btn" class="toggle-btn unlocked" onclick="toggleLock('zoom')">UNLOCKED</button>
+        </div>
+
+        <div style="margin-top: 15px;">
+            <div id="row-keys" class="status-row"><div class="status-dot"></div> <b>Keys:</b>&nbsp;'R' Reset | 'C' Cycle View</div>
+            <div id="row-roll" class="status-row"><div class="status-dot"></div> <b>Left Pinch:</b>&nbsp;Roll (Z)</div>
+            <div id="row-rotate" class="status-row"><div class="status-dot"></div> <b>Left Open:</b>&nbsp;Look (X/Y)</div>
+            <div id="row-right" class="status-row"><div class="status-dot"></div> <b>Right Hand:</b>&nbsp;Move</div>
+        </div>
+
+        <div class="control-section">
+            <div class="mode-toggle">
+                <label><input type="radio" name="mode" value="particles" checked><span>Points</span></label>
+                <label><input type="radio" name="mode" value="solid"><span>Solid</span></label>
+                <label><input type="radio" name="mode" value="wireframe"><span>Mesh</span></label>
+            </div>
+            
+            <div id="model-name" style="text-align:center; margin:10px 0; font-weight:bold; color:white;">NO MODEL</div>
+            <button class="btn-upload" onclick="document.getElementById('stl-input').click()">📂 IMPORT STL</button>
+            <input type="file" id="stl-input" accept=".stl" style="display:none">
+            <div id="upload-status" style="font-size:10px; color:#aaa; margin-top:5px; text-align: center;"></div>
+        </div>
+        
+        <div id="view-indicator">FREE VIEW</div>
+    </div>
+
+    <div id="preview-container"><video id="preview-video"></video></div>
+    <video id="input_video" style="display:none"></video>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+        let renderMode = 'particles';
+        let solidMesh, wireframeMesh;
+        let isPanLocked = false;
+        let isZoomLocked = false;
+        let sensitivity = 5.0;
+
+        // --- 1. SLIDER & LOCKS ---
+        const slider = document.getElementById('sensitivity-slider');
+        const sensVal = document.getElementById('sens-val');
+        slider.addEventListener('input', (e) => {
+            sensitivity = parseFloat(e.target.value);
+            sensVal.innerText = sensitivity.toFixed(1);
+        });
+
+        window.toggleLock = function(type) {
+            const btn = document.getElementById(`${type}-btn`);
+            if (type === 'pan') {
+                isPanLocked = !isPanLocked;
+                updateBtn(btn, isPanLocked);
+                isRightActive = false;
+            } else if (type === 'zoom') {
+                isZoomLocked = !isZoomLocked;
+                updateBtn(btn, isZoomLocked);
+                isZooming = false;
+            }
+        };
+
+        function updateBtn(btn, isLocked) {
+            if (isLocked) {
+                btn.innerText = "LOCKED";
+                btn.className = "toggle-btn locked";
+            } else {
+                btn.innerText = "UNLOCKED";
+                btn.className = "toggle-btn unlocked";
+            }
+        }
+
+        // --- 2. SCENE ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050505);
+        scene.fog = new THREE.FogExp2(0x050505, 0.015);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.z = 40;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0x404040, 2));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 2); dirLight.position.set(10, 20, 20); scene.add(dirLight);
+        const rimLight = new THREE.DirectionalLight(0x00ccff, 1); rimLight.position.set(-10, 10, -10); scene.add(rimLight);
+
+        const pivot = new THREE.Group();
+        scene.add(pivot);
+
+        const axesHelper = new THREE.AxesHelper(12);
+        axesHelper.material.linewidth = 3;
+        pivot.add(axesHelper);
+
+        // --- 3. PARTICLES ---
+        const PARTICLE_COUNT = 25000;
+        const pGeo = new THREE.BufferGeometry();
+        const pPos = new Float32Array(PARTICLE_COUNT * 3);
+        const pTargets = new Float32Array(PARTICLE_COUNT * 3);
+        for(let i=0; i<PARTICLE_COUNT; i++) {
+            pPos[i*3]=(Math.random()-0.5)*40; pPos[i*3+1]=(Math.random()-0.5)*40; pPos[i*3+2]=(Math.random()-0.5)*40;
+            pTargets[i*3]=pPos[i*3]; pTargets[i*3+1]=pPos[i*3+1]; pTargets[i*3+2]=pPos[i*3+2];
+        }
+        pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        const pMat = new THREE.PointsMaterial({ size: 0.1, color: 0x00ffcc, transparent: true, opacity: 0.8 });
+        const particles = new THREE.Points(pGeo, pMat);
+        pivot.add(particles);
+
+        const solidMat = new THREE.MeshStandardMaterial({ color: 0x00ffcc, roughness: 0.4, metalness: 0.6 });
+        const wireMat = new THREE.MeshBasicMaterial({ color: 0xff0088, wireframe: true, transparent: true, opacity: 0.4 });
+
+        function updateRenderMode() {
+            particles.visible = (renderMode === 'particles');
+            if(solidMesh) solidMesh.visible = (renderMode === 'solid');
+            if(wireframeMesh) wireframeMesh.visible = (renderMode === 'wireframe');
+        }
+        document.querySelectorAll('input[name="mode"]').forEach(r => {
+            r.addEventListener('change', (e) => { renderMode = e.target.value; updateRenderMode(); });
+        });
+
+        // --- 4. STL ---
+        document.getElementById('stl-input').addEventListener('change', (e) => {
+            const file = e.target.files[0]; if(!file) return;
+            document.getElementById('upload-status').innerText = "Processing...";
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                try {
+                    if(solidMesh) { pivot.remove(solidMesh); solidMesh.geometry.dispose(); }
+                    if(wireframeMesh) { pivot.remove(wireframeMesh); wireframeMesh.geometry.dispose(); }
+                    const geo = new STLLoader().parse(evt.target.result);
+                    geo.center(); geo.computeBoundingSphere();
+                    geo.scale(25/geo.boundingSphere.radius, 25/geo.boundingSphere.radius, 25/geo.boundingSphere.radius);
+                    solidMesh = new THREE.Mesh(geo, solidMat); pivot.add(solidMesh);
+                    wireframeMesh = new THREE.Mesh(geo, wireMat); pivot.add(wireframeMesh);
+                    const posAttr = geo.attributes.position;
+                    const faces = posAttr.count/3;
+                    for(let i=0; i<PARTICLE_COUNT; i++) {
+                        const f = Math.floor(Math.random()*faces)*3;
+                        const a = new THREE.Vector3().fromBufferAttribute(posAttr, f);
+                        const b = new THREE.Vector3().fromBufferAttribute(posAttr, f+1);
+                        const c = new THREE.Vector3().fromBufferAttribute(posAttr, f+2);
+                        let r1=Math.random(), r2=Math.random();
+                        if(r1+r2>1){r1=1-r1;r2=1-r2;}
+                        const p = a.addScaledVector(b.sub(a),r1).addScaledVector(c.sub(a),r2);
+                        pTargets[i*3]=p.x; pTargets[i*3+1]=p.y; pTargets[i*3+2]=p.z;
+                    }
+                    document.getElementById('model-name').innerText = file.name.replace('.stl','').substring(0,15).toUpperCase();
+                    document.getElementById('upload-status').innerText = "Ready";
+                    updateRenderMode();
+                } catch(err) { console.error(err); }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // --- 5. VIEW LOGIC & KEYBOARD ---
+        let targetRotX = 0, targetRotY = 0, targetRotZ = 0;
+        let targetPosX = 0, targetPosY = 0;
+        let targetScale = 1.0;
+
+        function resetView() {
+            targetRotX = 0; targetRotY = 0; targetRotZ = 0;
+            targetPosX = 0; targetPosY = 0;
+            targetScale = 1.0;
+            // Force Unlatch
+            isLeftActive = false; isLeftZActive = false; isRightActive = false;
+            leftOffset = {x:0, y:0, z:0}; rightOffset = {x:0, y:0};
+            
+            const ind = document.getElementById('view-indicator');
+            ind.innerText = "RESET VIEW";
+            ind.style.color = "#ff0088";
+            setTimeout(() => { ind.innerText = "FREE VIEW"; ind.style.color = "#555"; }, 1000);
+        }
+
+        const views = [
+            { name: "FRONT", rot: {x:0, y:0, z:0} },
+            { name: "RIGHT", rot: {x:0, y:-Math.PI/2, z:0} },
+            { name: "BACK", rot: {x:0, y:-Math.PI, z:0} },
+            { name: "LEFT", rot: {x:0, y:Math.PI/2, z:0} },
+            { name: "TOP", rot: {x:Math.PI/2, y:0, z:0} },
+            { name: "BOTTOM", rot: {x:-Math.PI/2, y:0, z:0} }
+        ];
+        let currentViewIdx = 0;
+
+        function cycleView() {
+            currentViewIdx = (currentViewIdx + 1) % views.length;
+            const v = views[currentViewIdx];
+            targetRotX = v.rot.x; targetRotY = v.rot.y; targetRotZ = v.rot.z;
+            
+            isLeftActive = false; isLeftZActive = false;
+            leftOffset = {x:0, y:0, z:0};
+            
+            const ind = document.getElementById('view-indicator');
+            ind.innerText = "VIEW: " + v.name;
+            ind.style.color = "#00ffcc";
+        }
+
+        // KEYBOARD LISTENERS
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'c') cycleView();
+            if (e.key.toLowerCase() === 'r') resetView();
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            pivot.rotation.x += (targetRotX - pivot.rotation.x) * 0.1;
+            pivot.rotation.y += (targetRotY - pivot.rotation.y) * 0.1;
+            pivot.rotation.z += (targetRotZ - pivot.rotation.z) * 0.1;
+            pivot.position.x += (targetPosX - pivot.position.x) * 0.1;
+            pivot.position.y += (targetPosY - pivot.position.y) * 0.1;
+            pivot.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+
+            const pos = pGeo.attributes.position.array;
+            for(let i=0; i<PARTICLE_COUNT*3; i++) pos[i] += (pTargets[i] - pos[i]) * 0.1;
+            pGeo.attributes.position.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- 6. HAND TRACKING ---
+        const vid = document.getElementById('input_video');
+        const prev = document.getElementById('preview-video');
+        vid.addEventListener('play', () => { prev.srcObject = vid.captureStream(); prev.play(); });
+
+        const hands = new Hands({locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        hands.setOptions({maxNumHands:2, modelComplexity:1});
+
+        let isRightActive = false, isLeftActive = false, isLeftZActive = false;
+        let isZooming = false;
+        let rightOffset = {x:0, y:0};
+        let leftOffset = {x:0, y:0, z:0};
+        let zoomBaseDist = 0, zoomBaseScale = 1;
+
+        hands.onResults(res => {
+            document.getElementById('loading').style.display = 'none';
+            let rFound = false, lFound = false;
+            let leftPinch = false, rightPinch = false;
+            let leftHandPos = null, rightHandPos = null;
+
+            if(res.multiHandLandmarks) {
+                for(const [idx, lm] of res.multiHandLandmarks.entries()) {
+                    const label = res.multiHandedness[idx].label;
+                    const x = lm[9].x; const y = lm[9].y;
+                    const pinch = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) < 0.05;
+
+                    if(label === 'Right') {
+                        rFound = true;
+                        if(pinch) rightPinch = true;
+                        rightHandPos = {x,y};
+                    }
+
+                    if(label === 'Left') {
+                        lFound = true;
+                        if(pinch) leftPinch = true;
+                        leftHandPos = {x,y};
+
+                        // B. ROTATION
+                        if (leftPinch) {
+                            // Roll (Z) - INVERTED Z
+                            document.getElementById('row-roll').classList.add('active');
+                            document.getElementById('row-rotate').classList.remove('active');
+                            const rawRotZ = (0.5 - x) * sensitivity; // <--- SENSITIVITY APPLIED
+                            if (!isLeftZActive) { leftOffset.z = targetRotZ - rawRotZ; isLeftZActive = true; }
+                            targetRotZ = rawRotZ + leftOffset.z;
+                            isLeftActive = false; 
+                        } else {
+                            // Yaw/Pitch (X/Y)
+                            document.getElementById('row-roll').classList.remove('active');
+                            document.getElementById('row-rotate').classList.add('active');
+                            
+                            const rawRotY = (0.5 - x) * sensitivity; // Inverted Y (Double Inversion logic kept)
+                            const rawRotX = (y - 0.5) * sensitivity; 
+                            if (!isLeftActive) { leftOffset.x = targetRotX - rawRotX; leftOffset.y = targetRotY - rawRotY; isLeftActive = true; }
+                            targetRotX = rawRotX + leftOffset.x;
+                            targetRotY = rawRotY + leftOffset.y;
+                            isLeftZActive = false;
+                        }
+                    }
+                }
+            }
+
+            // RESET LATCHES
+            if(!rFound) isRightActive = false;
+            if(!lFound) { isLeftActive = false; isLeftZActive = false; }
+
+            // 3. RIGHT HAND PAN
+            if (rFound && !rightPinch) {
+                const lm = res.multiHandLandmarks[res.multiHandedness.findIndex(h => h.label === 'Right')];
+                const x = lm[9].x; const y = lm[9].y;
+                if (!isPanLocked) {
+                    const rawX = (0.5 - x) * 60;
+                    const rawY = (0.5 - y) * 40;
+                    if(!isRightActive) { rightOffset.x = targetPosX - rawX; rightOffset.y = targetPosY - rawY; isRightActive = true; }
+                    targetPosX = rawX + rightOffset.x;
+                    targetPosY = rawY + rightOffset.y;
+                }
+            } else {
+                isRightActive = false;
+            }
+            document.getElementById('row-right').classList.toggle('active', rFound);
+
+            // 4. ZOOM
+            if (lFound && rFound && !isZoomLocked && (!leftPinch && !rightPinch)) {
+                const dx = leftHandPos.x - rightHandPos.x;
+                const dy = leftHandPos.y - rightHandPos.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if(!isZooming) { zoomBaseDist = dist; zoomBaseScale = targetScale; isZooming = true; }
+                const delta = (dist - zoomBaseDist) * 4;
+                targetScale = Math.max(0.1, zoomBaseScale + delta);
+            } else {
+                isZooming = false;
+            }
+        });
+
+        const cam = new Camera(vid, {onFrame: async()=>{ await hands.send({image:vid}); }, width:640, height:480});
+        cam.start();
+        window.onresize = () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+    </script>
+</body>
+</html>
